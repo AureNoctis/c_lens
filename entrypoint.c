@@ -66,16 +66,6 @@ LRESULT CALLBACK overlay_callback(HWND window, UINT msg, WPARAM wparam, LPARAM l
     return return_value;
 }
 
-void enable_dpi_awareness(void) {
-	HMODULE user32 = GetModuleHandleW(L"user32.dll");
-	if (user32) {
-		typedef BOOL(WINAPI * SetDpiFunc)(DPI_AWARENESS_CONTEXT);
-		SetDpiFunc set_dpi = (SetDpiFunc)GetProcAddress(user32, "SetProcessDpiAwarenessContext");
-		if (set_dpi) {
-			set_dpi(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-		}
-	}
-}
 void capture_entire_screen(HWND overlay_window){
 	int main_window_width  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
 	int main_window_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
@@ -117,9 +107,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     (void)nShowCmd;
 
     // summonConsole();
-    enable_dpi_awareness();
+	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-	wchar_t const* class_name	= L"ai_overlay_class";
+    wchar_t const* class_name	= L"ai_overlay_class";
 	wchar_t const* overlay_name = L"ai_overlay";
 
 	WNDCLASSW wc     = {0};
