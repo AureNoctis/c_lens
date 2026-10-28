@@ -176,7 +176,7 @@ typedef double f64;
 /* ======================================================================= */
 /*                              decelaration                               */
 /* ======================================================================= */
-#ifdef LANG_CPP
+#if LANG_CPP
 extern "C" {
 #endif
 /* .... structs .... */
@@ -217,7 +217,7 @@ internal void arena_temp_begin(Arena* arena);
 internal void arena_temp_end(Arena* arena);
 internal void arena_temp_end_all(Arena* arena);
 
-#ifdef LANG_CPP
+#if LANG_CPP
 }
 #endif
 

@@ -2,10 +2,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
-// #include <stdio.h>
+#include <stdio.h>
 #include <stdlib.h>
 
-// #include "utils.c"
+#include "utils.c"
+#define ARENA_IMPLEMENTATION
+#include "arena.h"
 
 #pragma comment(lib, "User32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -15,18 +17,19 @@
 #define START_HOTKEY_ID 1
 #define CLOSE_HOTKEY_ID 2
 
-global HWND		  hwnd_overlay;
-global HBITMAP	  hbm_screen	  = NULL;
-global void*	  raw_pixle_bytes = NULL;
-global BITMAPINFO bmi_info		  = {0};
+global HWND hwnd_overlay;
+
+global i32 screen_width;  
+global i32 screen_height;
+global i32 screen_x;  
+global i32 screen_y;  
+
+global u8* pixels;
+
 
 HWND create_overlay(HINSTANCE hInstance, const wchar_t* class_name, const wchar_t* overlay_name){
-	int screen_width  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-	int screen_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-	int screen_x	  = GetSystemMetrics(SM_XVIRTUALSCREEN);
-	int screen_y	  = GetSystemMetrics(SM_YVIRTUALSCREEN);
 
-    HWND overlay = CreateWindowExW(
+	HWND overlay = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
             class_name, overlay_name,
             WS_POPUP,
@@ -39,65 +42,93 @@ HWND create_overlay(HINSTANCE hInstance, const wchar_t* class_name, const wchar_
 
 LRESULT CALLBACK overlay_callback(HWND window, UINT msg, WPARAM wparam, LPARAM lparam){
     int return_value = 0;
-    switch(msg){
-    case WM_KEYDOWN: 
-        {
-            if(wparam == VK_ESCAPE){
-                ShowWindow(hwnd_overlay, SW_HIDE);
-            }
-        }
-        break;
-    case WM_CLOSE:
-        {
-            DestroyWindow(window);
-        }
-        break;
-    case WM_DESTROY:
-        {
-            UnregisterHotKey(NULL, START_HOTKEY_ID);
-			UnregisterHotKey(NULL, CLOSE_HOTKEY_ID);
-            hwnd_overlay = NULL;
-            PostQuitMessage(0);
+	switch (msg) {
+		case WM_PAINT: {
+            printf("wm_paint message\n");
+			PAINTSTRUCT ps;
+			HDC			hdc = BeginPaint(window, &ps);
+
+			if (pixels != NULL) {
+				BITMAPINFO bi = {0};
+
+				bi.bmiHeader.biSize		   = sizeof(BITMAPINFOHEADER);
+				bi.bmiHeader.biWidth	   = screen_width;
+				bi.bmiHeader.biHeight	   = -screen_height; // Top-down image
+				bi.bmiHeader.biPlanes	   = 1;
+				bi.bmiHeader.biBitCount	   = 32;
+				bi.bmiHeader.biCompression = BI_RGB;
+
+				StretchDIBits(hdc, 0, 0, screen_width, screen_height, // Destination
+							  0, 0, screen_width, screen_height,	  // Source
+							  pixels, &bi, DIB_RGB_COLORS, SRCCOPY);
+			}
+
+			EndPaint(window, &ps);
+			return 0;
 		}
-        break;
-    default:
-        return DefWindowProcW(window, msg, wparam, lparam);
-    }
-    return return_value;
+		case WM_KEYDOWN: {
+			if (wparam == VK_ESCAPE) {
+				ShowWindow(hwnd_overlay, SW_HIDE);
+			}
+		} break;
+
+		case WM_CLOSE: {
+			DestroyWindow(window);
+		} break;
+
+		case WM_DESTROY: {
+			UnregisterHotKey(NULL, START_HOTKEY_ID);
+			UnregisterHotKey(NULL, CLOSE_HOTKEY_ID);
+			hwnd_overlay = NULL;
+			PostQuitMessage(0);
+		} break;
+
+		default: 
+            return DefWindowProcW(window, msg, wparam, lparam);
+	}
+	return return_value;
 }
 
-void capture_entire_screen(HWND overlay_window){
-	int main_window_width  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-	int main_window_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-	int x				   = GetSystemMetrics(SM_XVIRTUALSCREEN);
-	int y				   = GetSystemMetrics(SM_YVIRTUALSCREEN);
+u32 capture_entire_screen(HDC screen_dc, HDC overlay_dc, HDC memory_dc, HBITMAP bitmap, u8** pixels){
+    if (!screen_dc || !overlay_dc || !memory_dc || !bitmap){
+        fprintf(stderr, "[ERROR] : Argument(s) is/are invalid\n");
+        return 0; 
+	}
 
-    ShowWindow(overlay_window, SW_HIDE);
-	Sleep(30);
-
-    HDC main_window_dc = GetDC(NULL);
-
-    bmi_info.bmiHeader.biSize		= sizeof(BITMAPINFOHEADER);
-	bmi_info.bmiHeader.biWidth		= main_window_width;
-	bmi_info.bmiHeader.biHeight		= -main_window_height; 
-	bmi_info.bmiHeader.biPlanes		= 1;
-	bmi_info.bmiHeader.biBitCount	= 32;
-	bmi_info.bmiHeader.biCompression = BI_RGB;
-
-    if(hbm_screen){
-        DeleteObject(hbm_screen);
+    HBITMAP old_bitmap = SelectObject(memory_dc, bitmap);
+    
+    if (!BitBlt(memory_dc, 0, 0, screen_width, screen_height, screen_dc, 0, 0, SRCCOPY | CAPTUREBLT)){
+        fprintf(stderr, "[ERROR] : BitBlit failed : %lu\n", GetLastError());
+        SelectObject(memory_dc, old_bitmap);
+        return 0;
     }
-    hbm_screen = CreateDIBSection(main_window_dc, &bmi_info, DIB_RGB_COLORS, &raw_pixle_bytes, NULL, 0);
-    HGDIOBJ old_bmp = SelectObject(main_window_dc, hbm_screen);
+    
+    SelectObject(memory_dc, old_bitmap);
+	
+    BITMAPINFO bi = {0};
 
+	bi.bmiHeader.biSize		   = sizeof(BITMAPINFOHEADER);
+	bi.bmiHeader.biWidth	   = screen_width;
+	bi.bmiHeader.biHeight	   = -screen_height;
+	bi.bmiHeader.biPlanes	   = 1;
+	bi.bmiHeader.biBitCount	   = 32;
+	bi.bmiHeader.biCompression = BI_RGB;
 
-    SelectObject(main_window_dc, old_bmp);
-    DeleteDC(main_window_dc);
+	DWORD stride	 = screen_width * 4;
+	DWORD image_size = stride * (DWORD)screen_height;
 
-    ShowWindow(overlay_window, SW_SHOW);
-    SetForegroundWindow(overlay_window);
-    SetFocus(overlay_window);
-    InvalidateRect(overlay_window, NULL, TRUE);
+	bi.bmiHeader.biSizeImage = image_size;
+
+    if ((*pixels) == NULL){
+        *pixels = malloc(image_size);
+    }
+    
+    u32 lines = GetDIBits(screen_dc, bitmap, 0, (UINT)screen_height, *pixels, &bi, DIB_RGB_COLORS);
+    if (lines != screen_height){
+        fprintf(stderr, "[ERROR] : GetDIBits failed: %lu\n", GetLastError());
+        return 0;
+    }
+    return 1; 
 }
 
 
@@ -106,7 +137,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     (void)lpCmdLine;
     (void)nShowCmd;
 
-    // summonConsole();
+    summonConsole();
 	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     wchar_t const* class_name	= L"ai_overlay_class";
@@ -132,16 +163,34 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		exit(1);
 	}
 
+	screen_width  = GetSystemMetrics(SM_CXSCREEN);
+	screen_height = GetSystemMetrics(SM_CYSCREEN);
+	screen_x	  = GetSystemMetrics(SM_XVIRTUALSCREEN);
+	screen_y	  = GetSystemMetrics(SM_YVIRTUALSCREEN);
+
+	HDC		screen_dc  = GetDC(0);
+	HDC		memory_dc  = CreateCompatibleDC(screen_dc);
+	HBITMAP bitmap	   = CreateCompatibleBitmap(screen_dc, screen_width, screen_height);
+
+	HDC overlay_dc;
+
 	MSG msg = {0};
     while(GetMessageW(&msg, NULL, 0, 0)){
         
         if(msg.message == WM_HOTKEY){
             if(msg.wParam == START_HOTKEY_ID){
+
                 if(hwnd_overlay == NULL){
                     hwnd_overlay = create_overlay(hInstance, class_name, overlay_name);
-                    SetLayeredWindowAttributes(hwnd_overlay, 0, 100, LWA_ALPHA);
+                    SetLayeredWindowAttributes(hwnd_overlay, 0, 255, LWA_ALPHA);
+                    overlay_dc = GetDC(hwnd_overlay);
                 }
-				// capture_entire_screen(hwnd_overlay);
+				capture_entire_screen(screen_dc, overlay_dc, memory_dc, bitmap, &pixels);
+                if(!pixels){
+                    fprintf(stderr, "[ERROR] : Unable to capture screen\n");
+                    exit(1);
+                }
+
 				ShowWindow(hwnd_overlay, SW_SHOW);
             }
             else if(msg.wParam == CLOSE_HOTKEY_ID){
